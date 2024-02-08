@@ -183,7 +183,7 @@ def task_scatter_distribution(df):
     print(f'generate {out_pdf}')
     plt.savefig(out_pdf, dpi=300, bbox_inches='tight')
 
-def task_boxplot_distribution(df):
+def task_runtime_distribution_boxplot(df):
     cumulative_runtimes = df.groupby('Comm')['Runtime'].sum()
     top_20_tasks = cumulative_runtimes.sort_values(ascending=False).head(20).index
     filtered_df = df[df['Comm'].isin(top_20_tasks)]
@@ -214,7 +214,7 @@ def task_boxplot_distribution(df):
 
     plt.tight_layout()
 
-    outbase = "task-boxplot-distribution"
+    outbase = "task-runtime-distribution-boxplot"
     out_png = f"{outbase}.png"
     print(f'generate {out_png}')
     plt.savefig(out_png, dpi=300, bbox_inches='tight')
@@ -222,8 +222,125 @@ def task_boxplot_distribution(df):
     print(f'generate {out_pdf}')
     plt.savefig(out_pdf, dpi=300, bbox_inches='tight')
 
+def calculate_spread_rating(task_runtimes):
+    if len(task_runtimes) <= 1:
+        return 0.0  # No spread with one or no value
+    
+    q1, q3 = np.percentile(task_runtimes, [25, 75])
+    iqr = q3 - q1
+    median = np.median(task_runtimes)
+    
+    if median == 0 and iqr == 0:
+        # Handle edge case where median and IQR are 0 to avoid division by zero
+        return 0.0
+    
+    # Normalize IQR by the median (or another meaningful value) and scale to get a percentage
+    spread_rating = (iqr / median) * 100 if median != 0 else iqr * 100  # Adjusted for cases with median=0
+    
+    return spread_rating
+
+def task_runtime_cv_distribution(df):
+    cumulative_runtimes = df.groupby('Comm')['Runtime'].sum()
+    top_20_tasks = cumulative_runtimes.sort_values(ascending=False).head(20).index
+
+    spread_ratings = [calculate_spread_rating(df[df['Comm'] == task]['Runtime']) for task in top_20_tasks]
+
+    # Plotting
+    fig, ax = plt.subplots(figsize=(12, 8))
+    bars = ax.bar(top_20_tasks, spread_ratings, color="lightblue")
+
+    for bar, rating in zip(bars, spread_ratings):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width() / 2.0, height, f'{rating:.1f}%', ha='center', va='bottom')
+
+    ax.set_ylabel('Runtime Spread Rating [%]')
+    ax.set_xlabel('Task')
+    ax.set_xticks(range(len(top_20_tasks)))
+    ax.set_xticklabels(top_20_tasks, rotation=45, ha='right')
+    ax.yaxis.grid(which='major', linestyle=':', linewidth='0.5', color='#bbbbbb')
+    ax.set_axisbelow(True)
+
+    plt.tight_layout()
+
+    outbase = "task-uniformity-score-distribution"
+    out_png = f"{outbase}.png"
+    print(f'generate {out_png}')
+    plt.savefig(out_png, dpi=300, bbox_inches='tight')
+    out_pdf = f"{outbase}.pdf"
+    print(f'generate {out_pdf}')
+    plt.savefig(out_pdf, dpi=300, bbox_inches='tight')
+
+
+def task_spread_rating_distribution_grouped(df):
+    cumulative_runtimes = df.groupby('Comm')['Runtime'].sum()
+    top_tasks = cumulative_runtimes.sort_values(ascending=False).head(20).index
+
+    fig, ax = plt.subplots(figsize=(14, 8))
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    
+    bar_width = 0.35  
+    index = np.arange(len(top_tasks))
+    
+    # Lists for runtime and sleeptime spread ratings
+    runtime_spreads = []
+    sleeptime_spreads = []
+    
+    # Calculate spread ratings for runtime and sleeptime
+    for task in top_tasks:
+        runtime_spreads.append(calculate_spread_rating(df[df['Comm'] == task]['Runtime']))
+        sleeptime_spreads.append(calculate_spread_rating(df[df['Comm'] == task]['Time Out-In']))
+    
+    # Plotting
+    bars1 = ax.bar(index - bar_width/2, runtime_spreads, bar_width, label='Runtime Spread')
+    bars2 = ax.bar(index + bar_width/2, sleeptime_spreads, bar_width, label='Sleeptime Spread')
+
+    # Adding text for labels, title, and axes ticks
+    ax.set_xlabel('Task')
+    ax.set_ylabel('Spread Rating [%]')
+    ax.set_xticks(index)
+    ax.set_xticklabels(top_tasks, rotation=45, ha='right')
+    ax.legend()
+
+    ax.yaxis.grid(which='major', linestyle=':', linewidth='0.5', color='#bbbbbb')
+    ax.yaxis.grid(which='minor', linestyle=':', linewidth='0.5', color='#bbbbbb')
+    ax.set_axisbelow(True)
+
+    ax.set_yscale('log')
+
+    ax.yaxis.set_major_formatter(ScalarFormatter())
+
+    # Use a function to ensure no scientific notation, with customization for percentages if necessary
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda x, pos: f'{x:.0f}%'))
+
+
+    for bars in (bars1, bars2):
+        for bar in bars:
+            height = bar.get_height()
+            ax.annotate(f'{height:.1f}%',
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3),
+                        textcoords="offset points",
+                        ha='center', va='bottom',
+                        fontsize=5)
+
+    plt.tight_layout()
+
+    outbase = "task-run-sleeptime-grouped"
+    out_png = f"{outbase}.png"
+    print(f'generate {out_png}')
+    plt.savefig(out_png, dpi=300, bbox_inches='tight')
+    out_pdf = f"{outbase}.pdf"
+    print(f'generate {out_pdf}')
+    plt.savefig(out_pdf, dpi=300, bbox_inches='tight')
+
+
+
 task_frequency(df)
 task_cumulative_runtime(df)
 task_violin_distribution(df)
 task_scatter_distribution(df)
-task_boxplot_distribution(df)
+task_runtime_distribution_boxplot(df)
+task_runtime_cv_distribution(df)
+
+task_spread_rating_distribution_grouped(df)
