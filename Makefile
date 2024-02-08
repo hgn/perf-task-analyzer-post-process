@@ -1,4 +1,6 @@
+.PHONY: all clean record-workload analyze-workload post-process-task
 
+all: post-process-task
 
 record-workload:
 	@sudo rm -f perf.data
@@ -15,6 +17,3 @@ post-process-task:
 clean:
 	rm -f *.pdf
 	rm -f *.png
-
-
-all: analyze-workload
