@@ -3,6 +3,7 @@
 import os
 import sys
 import itertools
+import time
 import inspect
 import math
 import csv
@@ -11,41 +12,48 @@ import pandas as pd
 import numpy as np
 import collections
 import subprocess
+import string
+import random
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from collections import defaultdict
 from matplotlib.ticker import ScalarFormatter, MultipleLocator, StrMethodFormatter, FuncFormatter
 
-FILE_BASE = "task.csv"
+FILE_BASE = "reference.csv"
 
 df = pd.read_csv(FILE_BASE, sep=";")
 
 
 def calculate_spread_rating(task_runtimes):
     if len(task_runtimes) <= 1:
-        return 0.0  # No spread with one or no value
-    
+        return 0.0
+
     q1, q3 = np.percentile(task_runtimes, [25, 75])
     iqr = q3 - q1
+
     median = np.median(task_runtimes)
-    
     if median == 0 and iqr == 0:
         return 0.0
     
     spread_rating = (iqr / median) * 100 if median != 0 else iqr * 100
-    
     return spread_rating
+
+
+def generate_random_filename(length: int = 12, suffix: str = "") -> str:
+    chars = string.ascii_letters + string.digits
+    filename = ''.join(random.choice(chars) for _ in range(length))
+    return f"/tmp/{filename}{suffix}"
 
 
 def create_images(frame):
     plt.tight_layout()
     outbase = frame.f_code.co_name.replace("_", "-")
-    out_png = f"{outbase}.png"
-    print(f'generate {out_png}')
-    plt.savefig(out_png, dpi=300, bbox_inches='tight')
-    out_pdf = f"{outbase}.pdf"
-    print(f'generate {out_pdf}')
-    plt.savefig(out_pdf, dpi=300, bbox_inches='tight')
+    for ext in ['png', 'pdf']:
+        outfile = f"{outbase}.{ext}"
+        plt.savefig(outfile, dpi=300, bbox_inches='tight')
+        print(f"Generated {outfile}")
+    plt.close()
+    cleanup_directory()
 
 
 def create_graphviz(in_filename, frame):
@@ -56,6 +64,7 @@ def create_graphviz(in_filename, frame):
     subprocess.run(['fdp', in_filename, '-Tpng', '-Gdpi=300', '-o', out_fdp_png])
     print(f'generate {out_dot_png}')
     subprocess.run(['dot', in_filename, '-Tpng', '-Gdpi=600', '-o', out_dot_png])
+    cleanup_directory()
 
 
 def cleanup_directory(directory: str = ".") -> None:
@@ -88,9 +97,46 @@ def cleanup_directory(directory: str = ".") -> None:
                 source_path = os.path.join(directory, filename)
                 target_path = os.path.join(directory, target_dir, filename)
                 shutil.move(source_path, target_path)
-                print(f"Moved '{filename}' to '{target_dir}/'")
-                break  # Move to the next file after a successful move
+                print(f"move '{filename}' to '{target_dir}/{filename}'")
+                break
 
+def tid_runs(df):
+    df['Label'] = df.apply(lambda x: f"{x['TID']} ({x['Comm']}, {x['PID']})", axis=1)
+
+    # Step 2: Count occurrences of each unique TID (now using the Label column for clarity)
+    process_counts = df['Label'].value_counts()
+
+    # Step 3: Get the top 20 TIDs based on their counts
+    top_20_process_counts = process_counts.head(20)
+
+    # Step 4: Plotting
+    fig, ax = plt.subplots(figsize=(18, 8))
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_visible(False)
+
+    colors = ['blueviolet', 'mediumorchid']
+    bar_positions = range(len(top_20_process_counts))
+    for i, value in enumerate(top_20_process_counts.values):
+        ax.barh(bar_positions[i], value, color=colors[i % len(colors)], edgecolor='none')
+
+    # Add text labels to the bars
+    for i, value in enumerate(top_20_process_counts.values):
+        label_x_pos = value + max(top_20_process_counts.values) * 0.01
+        ax.text(label_x_pos, i, f'{value}', va='center', fontsize=9)
+
+    ax.invert_yaxis()
+    ax.set_axisbelow(True)
+    ax.tick_params(axis='y', length=0)
+    ax.xaxis.grid(which='major', linestyle=':', linewidth='0.8', color='#bbbbbb')
+    ax.xaxis.grid(which='minor', linestyle=':', linewidth='0.8', color='#bbbbbb')
+
+    ax.set_ylabel('TID (Comm, PID)')
+    ax.set_xlabel('Number of Task Runs')
+    ax.set_yticks(bar_positions)
+    ax.set_yticklabels(top_20_process_counts.index, fontsize=9)
+
+    create_images(inspect.currentframe())
 
 
 def comm_runs(df):
@@ -120,12 +166,40 @@ def comm_runs(df):
     ax.xaxis.grid(which='major', linestyle=':', linewidth='0.8', color='#bbbbbb')
     ax.xaxis.grid(which='minor', linestyle=':', linewidth='0.8', color='#bbbbbb')
 
-    ax.set_ylabel('Task')
-    ax.set_xlabel('Number of Task Runs')
+    ax.set_ylabel('Comm')
+    ax.set_xlabel('Number of Comm Runs')
     ax.set_yticks(bar_positions)
     ax.set_yticklabels(top_10_process_counts.index)
 
     create_images(inspect.currentframe())
+
+def tid_runtime_cumulative(df):
+    df['Label'] = df.apply(lambda x: f"{x['TID']} ({x['Comm']}, {x['PID']})", axis=1)
+    cumulative_runtimes = df.groupby('TID')['Runtime'].sum().nlargest(20) / 1e6
+    tid_to_label = df.drop_duplicates('TID').set_index('TID')['Label']
+    cumulative_runtimes.index = cumulative_runtimes.index.map(tid_to_label)
+
+    fig, ax = plt.subplots(figsize=(18, 8))
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_visible(False)
+    colors = ['royalblue', 'dodgerblue']
+
+    for i, (index, value) in enumerate(zip(cumulative_runtimes.index[::-1], cumulative_runtimes.values[::-1])):
+        bar = ax.barh(index, value, color=colors[i % len(colors)])
+        width = bar[0].get_width()
+        label_x_pos = width + ax.get_xlim()[1] * 0.01
+        ax.text(label_x_pos, bar[0].get_y() + bar[0].get_height() / 2, f' {width:.2f}', va='center', fontsize=9)
+
+    ax.set_ylabel('TID (Comm, PID)')
+    ax.set_xlabel('Cumulative Runtime [ms]')
+    ax.set_axisbelow(True)
+    ax.tick_params(axis='y', length=0)
+    ax.xaxis.grid(which='major', linestyle=':', linewidth='0.8', color='#bbbbbb')
+    ax.xaxis.grid(which='minor', linestyle=':', linewidth='0.8', color='#bbbbbb')
+
+    create_images(inspect.currentframe())
+
 
 def comm_runtime_cumulative(df):
     cumulative_runtimes = df.groupby('Comm')['Runtime'].sum().sort_values(ascending=False).head(20)
@@ -134,7 +208,6 @@ def comm_runtime_cumulative(df):
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.spines["left"].set_visible(False)
-
 
     colors = ['royalblue', 'dodgerblue']  # Alternating colors
 
@@ -418,14 +491,48 @@ def comm_runtime_distribution_boxplot(df):
     create_images(inspect.currentframe())
 
 
+def tid_runtime_spread(df):
+    df['TaskLabel'] = df.apply(lambda x: f"{x['TID']} ({x['Comm']}, {x['PID']})", axis=1)
+    cumulative_runtimes = df.groupby(['TID', 'TaskLabel'])['Runtime'].sum().reset_index()
+    top_20_tasks = cumulative_runtimes.sort_values(by='Runtime', ascending=False).head(20)
+    spread_ratings_df = pd.DataFrame({
+        'TaskLabel': top_20_tasks['TaskLabel'],
+        'SpreadRating': [calculate_spread_rating(df[df['TID'] ==
+            row['TID']]['Runtime']) for index, row in top_20_tasks.iterrows()]
+    })
+
+    spread_ratings_df_sorted = spread_ratings_df.sort_values(by='SpreadRating', ascending=False)
+
+    fig, ax = plt.subplots(figsize=(12, 8))
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    bars = ax.bar(spread_ratings_df_sorted['TaskLabel'],
+            spread_ratings_df_sorted['SpreadRating'], color="dodgerblue")
+    for bar, rating in zip(bars, spread_ratings_df_sorted['SpreadRating']):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width() / 2.0, height, f'{rating:.0f}%',
+                ha='center', va='bottom')
+
+    ax.set_ylabel('Runtime Spread Rating [%]')
+    ax.set_xlabel('TID (Comm, PID)')
+    ax.set_xticks(np.arange(len(spread_ratings_df_sorted)))
+    ax.set_xticklabels(spread_ratings_df_sorted['TaskLabel'], rotation=45, ha='right')
+    ax.yaxis.grid(which='major', linestyle=':', linewidth='0.5', color='gray')
+    ax.set_axisbelow(True)
+
+    create_images(inspect.currentframe())
+
+
 def comm_runtime_spread(df):
     cumulative_runtimes = df.groupby('Comm')['Runtime'].sum()
     top_20_tasks = cumulative_runtimes.sort_values(ascending=False).head(20).index
 
     spread_ratings = [calculate_spread_rating(df[df['Comm'] == task]['Runtime']) for task in top_20_tasks]
 
-    # Plotting
     fig, ax = plt.subplots(figsize=(12, 8))
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
     bars = ax.bar(top_20_tasks, spread_ratings, color="dodgerblue")
 
     for bar, rating in zip(bars, spread_ratings):
@@ -438,6 +545,63 @@ def comm_runtime_spread(df):
     ax.set_xticklabels(top_20_tasks, rotation=45, ha='right')
     ax.yaxis.grid(which='major', linestyle=':', linewidth='0.5', color='#bbbbbb')
     ax.set_axisbelow(True)
+
+    create_images(inspect.currentframe())
+
+def tid_runtime_sleeptime_spread(df):
+    cumulative_runtimes = df.groupby('TID')['Runtime'].sum()
+    top_tids = cumulative_runtimes.sort_values(ascending=False).head(20).index
+
+    # Prepare labels "<TID> (<Comm>, <PID>)" for the top TIDs
+    # Assuming 'Comm' and 'PID' don't vary within each 'TID', otherwise adjust this logic
+    tid_labels = df[df['TID'].isin(top_tids)].drop_duplicates('TID').set_index('TID')
+    tid_labels['Label'] = tid_labels.apply(lambda x: f'{x.name} ({x["Comm"]}, {x["PID"]})', axis=1)
+    labels_for_plot = tid_labels.loc[top_tids]['Label']
+
+    fig, ax = plt.subplots(figsize=(14, 8))
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    bar_width = 0.35
+    index = np.arange(len(top_tids))
+
+    # Lists for runtime and sleeptime spread ratings
+    runtime_spreads = []
+    sleeptime_spreads = []
+
+    # Calculate spread ratings for runtime and sleeptime for the top TIDs
+    for tid in top_tids:
+        runtime_spreads.append(calculate_spread_rating(df[df['TID'] == tid]['Runtime']))
+        sleeptime_spreads.append(calculate_spread_rating(df[df['TID'] == tid]['Time Out-In']))
+
+    # Plotting
+    bars1 = ax.bar(index - bar_width/2, runtime_spreads, bar_width, label='Runtime Spread', color="dodgerblue")
+    bars2 = ax.bar(index + bar_width/2, sleeptime_spreads, bar_width, label='Sleeptime Spread', color="darkorange")
+
+    # Adding text for labels, title, and axes ticks
+    ax.set_xlabel('Task')
+    ax.set_ylabel('Spread Rating [%]')
+    ax.set_xticks(index)
+    ax.set_xticklabels(labels_for_plot, rotation=45, ha='right')
+    ax.legend()
+
+    ax.yaxis.grid(which='major', linestyle=':', linewidth='0.5', color='#bbbbbb')
+    ax.yaxis.grid(which='minor', linestyle=':', linewidth='0.5', color='#bbbbbb')
+    ax.set_axisbelow(True)
+
+    ax.set_yscale('log')
+    ax.yaxis.set_major_formatter(ScalarFormatter())
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda x, pos: f'{x:.0f}%'))
+
+    for bars in (bars1, bars2):
+        for bar in bars:
+            height = bar.get_height()
+            ax.annotate(f'{height:.1f}%',
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3),
+                        textcoords="offset points",
+                        ha='center', va='bottom',
+                        fontsize=5)
 
     create_images(inspect.currentframe())
 
@@ -495,6 +659,48 @@ def comm_runtime_sleeptime_spread(df):
 
     create_images(inspect.currentframe())
 
+def tid_runtime_linechart(df):
+    tid1, tid2, tid3 = 3959, 4230, 3902
+
+    p1 = df[df['TID'] == tid1]
+    p2 = df[df['TID'] == tid2]
+    p3 = df[df['TID'] == tid3]
+
+    fig, ax = plt.subplots(figsize=(16, 8))
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    p1_line, = ax.plot(p1['Switched-In'], p1['Runtime'], marker=None, linestyle='-', color='royalblue')
+    p2_line, = ax.plot(p2['Switched-In'], p2['Runtime'], marker=None, linestyle='-', color='darkorchid')
+    p3_line, = ax.plot(p3['Switched-In'], p3['Runtime'], marker=None, linestyle='-', color='darkorange')
+
+    label_offset = 0.1
+
+    label1 = f'{tid1} ({p1["Comm"].iloc[0]}, {p1["PID"].iloc[0]})'
+    label2 = f'{tid2} ({p2["Comm"].iloc[0]}, {p2["PID"].iloc[0]})'
+    label3 = f'{tid3} ({p3["Comm"].iloc[0]}, {p3["PID"].iloc[0]})'
+
+    ax.text(p1['Switched-In'].iloc[-1] + label_offset, p1['Runtime'].iloc[-1], label1, va='center', fontsize=12)
+    ax.text(p2['Switched-In'].iloc[-1] + label_offset, p2['Runtime'].iloc[-1], label2, va='center', fontsize=12)
+    ax.text(p3['Switched-In'].iloc[-1] + label_offset, p3['Runtime'].iloc[-1], label3, va='center', fontsize=12)
+
+    ax.scatter(p1['Switched-In'], p1['Runtime'], color='royalblue',  alpha=0.4, edgecolor='none')
+    ax.scatter(p2['Switched-In'], p2['Runtime'], color='darkorchid', alpha=0.4, edgecolor='none')
+    ax.scatter(p3['Switched-In'], p3['Runtime'], color='darkorange', alpha=0.4, edgecolor='none')
+
+    ax.set_xlabel('Time')
+    ax.set_ylabel('Task Runtime [μs]')
+    ax.set_yscale('log')
+    ax.yaxis.grid(which='major', linestyle=':', linewidth='0.5', color='#bbbbbb')
+    ax.yaxis.grid(which='minor', linestyle=':', linewidth='0.5', color='#bbbbbb')
+    ax.set_axisbelow(True)
+    ax.get_yaxis().set_major_formatter(FuncFormatter(lambda x, pos: f'{x / 1000:.0f}'))
+
+
+    create_images(inspect.currentframe())
+
+
+
 def comm_runtime_linechart(df):
     p1 = df[df['Comm'] == 'rcu_preempt']
     p2 = df[df['Comm'] == 'perf']
@@ -533,6 +739,44 @@ def comm_runtime_linechart(df):
     ax.yaxis.grid(which='major', linestyle=':', linewidth='0.5', color='#bbbbbb')
     ax.yaxis.grid(which='minor', linestyle=':', linewidth='0.5', color='#bbbbbb')
     ax.set_axisbelow(True)
+    ax.get_yaxis().set_major_formatter(FuncFormatter(lambda x, pos: f'{x / 1000:.0f}'))
+
+    create_images(inspect.currentframe())
+
+
+def tid_sleeptime_linechart(df):
+    tid_values = [3959, 4230, 3957]
+
+    columns_to_check = ['Runtime', 'Time Out-In', 'Time Out-Out', 'Time In-In', 'Time In-Out']
+    df = df.loc[~(df[columns_to_check] == -1).any(axis=1)]
+
+    fig, ax = plt.subplots(figsize=(16, 8))
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    colors = ['royalblue', 'darkorchid', 'darkorange']
+    for i, tid in enumerate(tid_values):
+        p = df[df['TID'] == tid]
+        if not p.empty:
+            unique_comm = p['Comm'].iloc[0]
+            unique_pid = p['PID'].iloc[0]
+            label = f"{tid} ({unique_comm}, {unique_pid})"
+            ax.plot(p['Switched-In'], p['Time Out-In'], linestyle='-', color=colors[i], label=label)
+            ax.scatter(p['Switched-In'], p['Time Out-In'], color=colors[i], alpha=0.4, edgecolor='none')
+            try:
+                label_offset = 0.1
+                ax.text(p['Switched-In'].iloc[-1] + label_offset, p['Time Out-In'].iloc[-1],
+                        label, va='center', fontsize=12)
+            except IndexError:
+                pass
+
+    ax.set_xlabel('Time')
+    ax.set_ylabel('Task Sleeptime [μs]')
+    ax.set_yscale('log')
+    ax.yaxis.grid(which='major', linestyle=':', linewidth='0.5', color='#bbbbbb')
+    ax.yaxis.grid(which='minor', linestyle=':', linewidth='0.5', color='#bbbbbb')
+    ax.set_axisbelow(True)
+    ax.legend()  # Add legend to distinguish multiple lines
     ax.get_yaxis().set_major_formatter(FuncFormatter(lambda x, pos: f'{x / 1000:.0f}'))
 
     create_images(inspect.currentframe())
@@ -587,17 +831,20 @@ def comm_sleeptime_linechart(df):
 
     create_images(inspect.currentframe())
 
-def comm_runs_vs_runtime(df):
-    total_runtime = df.groupby('Comm')['Runtime'].sum().nlargest(40)
-    execution_count = df.groupby('Comm').size().reindex(total_runtime.index)
 
-    # Join total runtime and execution count, focusing on the top 20 tasks by total runtime
+def tid_runs_vs_runtime_quadrant(df):
+    total_runtime = df.groupby('TID')['Runtime'].sum().nlargest(40)
+
+    execution_count = df.groupby('TID').size().reindex(total_runtime.index)
+
+    labels_df = df.drop_duplicates('TID').set_index('TID')[['Comm', 'PID']]
+    labels_df['Label'] = labels_df.apply(lambda x: f"{x.name} ({x['Comm']}, {x['PID']})", axis=1)
+
     task_summary = pd.DataFrame({
         'Total_Runtime': total_runtime,
         'Count': execution_count
-    })
+    }).join(labels_df)
 
-    # Plotting
     fig, ax = plt.subplots(figsize=(12, 12))
 
     sizes = task_summary['Total_Runtime'] / task_summary['Total_Runtime'].max() * 1000  # Normalize sizes for visibility
@@ -606,7 +853,6 @@ def comm_runs_vs_runtime(df):
     ax.set_xscale('log')
     ax.set_yscale('log')
 
-    # Add descriptive text for axes
     ax.set_xlabel('Total Runtime [ms] (low ← → high)')
     ax.set_ylabel('Execution Count [#] (low ← → high)')
 
@@ -616,7 +862,46 @@ def comm_runs_vs_runtime(df):
     ax.xaxis.grid(which='minor', linestyle=':', linewidth='0.5', color='#bbbbbb')
     ax.set_axisbelow(True)
 
-    # ignore median
+    x_geo_mean = (task_summary['Total_Runtime'].max() - task_summary['Total_Runtime'].min()) // 2
+    y_geo_mean = (task_summary['Count'].max() - task_summary['Count'].min()) // 2
+    ax.axvline(x=x_geo_mean, color='grey', linestyle='--')
+    ax.axhline(y=y_geo_mean, color='grey', linestyle='--')
+
+    ax.get_yaxis().set_major_formatter(FuncFormatter(lambda x, pos: f'{int(x):d}'))
+    ax.get_xaxis().set_major_formatter(FuncFormatter(lambda x, pos: f'{x / 1000000:.0f}'))
+
+    for index, row in task_summary.iterrows():
+        ax.text(row['Total_Runtime'], row['Count'], ' ' + row['Label'], va='center', fontsize=8)
+
+    create_images(inspect.currentframe())
+
+
+def comm_runs_vs_runtime_quadrant(df):
+    total_runtime = df.groupby('Comm')['Runtime'].sum().nlargest(40)
+    execution_count = df.groupby('Comm').size().reindex(total_runtime.index)
+
+    task_summary = pd.DataFrame({
+        'Total_Runtime': total_runtime,
+        'Count': execution_count
+    })
+
+    fig, ax = plt.subplots(figsize=(12, 12))
+
+    sizes = task_summary['Total_Runtime'] / task_summary['Total_Runtime'].max() * 1000
+    scatter = ax.scatter(task_summary['Total_Runtime'], task_summary['Count'], s=sizes, alpha=0.6)
+
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+
+    ax.set_xlabel('Total Runtime [ms] (low ← → high)')
+    ax.set_ylabel('Execution Count [#] (low ← → high)')
+
+    ax.yaxis.grid(which='major', linestyle=':', linewidth='0.5', color='#bbbbbb')
+    ax.yaxis.grid(which='minor', linestyle=':', linewidth='0.5', color='#bbbbbb')
+    ax.xaxis.grid(which='major', linestyle=':', linewidth='0.5', color='#bbbbbb')
+    ax.xaxis.grid(which='minor', linestyle=':', linewidth='0.5', color='#bbbbbb')
+    ax.set_axisbelow(True)
+
     x_median = np.sqrt(task_summary['Total_Runtime'].min() * task_summary['Total_Runtime'].max())
     y_median = np.sqrt(task_summary['Count'].min() * task_summary['Count'].max())
     x_geo_mean = (task_summary['Total_Runtime'].max() - task_summary['Total_Runtime'].min()) // 2
@@ -627,13 +912,68 @@ def comm_runs_vs_runtime(df):
     ax.get_yaxis().set_major_formatter(FuncFormatter(lambda x, pos: f'{int(x):d}'))
     ax.get_xaxis().set_major_formatter(FuncFormatter(lambda x, pos: f'{x / 1000000:.0f}'))
 
-    # Add task names beside each scatter point
     for task_name, row in task_summary.iterrows():
         ax.text(row['Total_Runtime'], row['Count'], ' ' + task_name, va='center')
 
-
     create_images(inspect.currentframe())
 
+
+def tid_runtime_utilization(df):
+    # FIXME, buggy.
+    # THe overall value is above 100%, this is not doable by one TID
+    return
+    runtime_sum = df.groupby('TID')['Runtime'].sum().reset_index()
+    top_runtime_sum = runtime_sum.nlargest(10, 'Runtime')
+
+    # Join to get Comm and PID for labeling
+    top_tasks = top_runtime_sum.merge(df[['TID', 'Comm', 'PID']].drop_duplicates(), on='TID', how='left')
+
+    # Creating a label column "<TID> (<Comm>, <PID>)"
+    top_tasks['Label'] = top_tasks.apply(lambda x: f'{x["TID"]} ({x["Comm"]}, {x["PID"]})', axis=1)
+
+    # Initialize a DataFrame to track CPU utilization per second for each of the top 10 tasks
+    time_min = math.floor(df['Switched-In'].min())
+    time_max = math.ceil(df['Switched-In'].max())
+    cpu_utilization = pd.DataFrame(index=np.arange(time_min, time_max + 1))
+
+    # Initialize columns for each top task
+    for label in top_tasks['Label']:
+        cpu_utilization[label] = 0
+
+    # Accumulate runtime to the nearest second for each task in the top 10
+    for _, row in df.iterrows():
+        if row['TID'] in top_tasks['TID'].values:
+            second = math.floor(row['Switched-In'])
+            label = top_tasks[top_tasks['TID'] == row['TID']]['Label'].values[0]  # Find the label for the TID
+            cpu_utilization.at[second, label] += row['Runtime']
+
+    # Convert accumulated runtime in nanoseconds to CPU utilization percentage per second
+    cpu_utilization = cpu_utilization / 1e6  # Adjusted division for correct percentage calculation
+
+    # Plotting
+    fig, axes = plt.subplots(nrows=10, figsize=(20, 10), sharex=True)
+
+    # Find the highest utilization to set y_lim
+    max_utilization = cpu_utilization.max().max()
+
+    for i, label in enumerate(top_tasks['Label']):
+        axes[i].spines["top"].set_visible(False)
+        axes[i].spines["right"].set_visible(False)
+
+        axes[i].yaxis.grid(which='major', linestyle=':', linewidth='0.5', color='gray')
+        axes[i].xaxis.grid(which='major', linestyle=':', linewidth='0.5', color='gray')
+
+        axes[i].fill_between(cpu_utilization.index, 0, cpu_utilization[label], step='mid', alpha=0.5)
+        axes[i].axhline(y=100, color='r', linestyle='--', linewidth=0.5)
+        axes[i].set_ylim(0, max(max_utilization, 100))
+        axes[i].set_xlim(time_min, time_max)
+
+        axes[i].set_ylabel(f'{label}', fontsize=8)
+
+    axes[-1].set_xlabel('Time (s)')
+
+
+    create_images(inspect.currentframe())
 
 def comm_runtime_utilization(df):
     # Calculate total runtime for each task and select the top 10 tasks
@@ -689,35 +1029,54 @@ def comm_runtime_utilization(df):
     create_images(inspect.currentframe())
 
 
+def tid_runtime_overall_pie(df):
+    df['Runtime'] /= 1e9
+    df['Label'] = df['TID'].astype(str) + " (" + df['Comm'] + ", " + df['PID'].astype(str) + ")"
+
+    total_runtime_per_label = df.groupby('Label')['Runtime'].sum()
+    total_runtime = total_runtime_per_label.sum()
+    runtime_percentage = (total_runtime_per_label / total_runtime) * 100
+
+    # Threshold for grouping into "Other"
+    remain_threshold = 3
+    remain_runtime = total_runtime_per_label[runtime_percentage < remain_threshold].sum()
+    filtered_runtime_per_label = total_runtime_per_label[runtime_percentage >= remain_threshold]
+    remain_label = 'Other' if remain_runtime > 0 else ''
+
+    if remain_runtime > 0:
+        filtered_runtime_per_label[remain_label] = remain_runtime
+
+    explode = [0.1 if label == remain_label else 0 for label in filtered_runtime_per_label.index]
+
+    fig, ax = plt.subplots(figsize=(14, 7))
+    colors = plt.get_cmap('tab10').colors 
+    ax.pie(filtered_runtime_per_label, labels=filtered_runtime_per_label.index, autopct='%1.1f%%',
+           startangle=90, counterclock=False, colors=colors[:len(filtered_runtime_per_label)], explode=explode)
+
+    create_images(inspect.currentframe())
+
+
 def comm_runtime_overall_pie(df):
-    # Convert 'Runtime' from nanoseconds to seconds
     df['Runtime'] /= 1e9
 
-    # Calculate total runtime for each task
     total_runtime_per_comm = df.groupby('Comm')['Runtime'].sum()
     total_runtime = total_runtime_per_comm.sum()
-
-    # Determine the percentage of total runtime for each task
     runtime_percentage = (total_runtime_per_comm / total_runtime) * 100
 
-    # Threshold for grouping into "Remain"
     remain_threshold = 3
     remain_runtime = total_runtime_per_comm[runtime_percentage < remain_threshold].sum()
     filtered_runtime_per_comm = total_runtime_per_comm[runtime_percentage >= remain_threshold]
     remain_label = 'Remain' if remain_runtime > 0 else ''
 
-    # Add 'Remain' if necessary
     if remain_runtime > 0:
         filtered_runtime_per_comm[remain_label] = remain_runtime
 
-    # Prepare explode parameter for pie chart
     explode = [0.1 if label == remain_label else 0 for label in filtered_runtime_per_comm.index]
 
     fig, ax = plt.subplots(figsize=(14, 7))
-    colors = plt.get_cmap('tab10').colors  # Using the 'tab10' colormap for vibrant colors
+    colors = plt.get_cmap('tab10').colors
     ax.pie(filtered_runtime_per_comm, labels=filtered_runtime_per_comm.index, autopct='%1.1f%%',
            startangle=90, counterclock=False, colors=colors[:len(filtered_runtime_per_comm)], explode=explode)
-
 
     create_images(inspect.currentframe())
 
@@ -803,10 +1162,9 @@ def comm_pid_tid_hierarchy_dot(runtimes, filename, filter):
 
 
 def comm_pid_tid_hierarchy(filter=None):
-    filename = "task.csv"
     runtimes = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
 
-    with open(filename, 'r') as csvfile:
+    with open(FILE_BASE, 'r') as csvfile:
         csvreader = csv.reader(csvfile)
         header = next(csvreader)[0].split(";")
         comm_index = header.index('Comm')
@@ -824,9 +1182,10 @@ def comm_pid_tid_hierarchy(filter=None):
             runtimes[comm][pid][tid] += runtime
             runtimes[comm][pid]['_total'] += runtime
             runtimes[comm]['_total']['_total'] += runtime
-    dot_filename = "/tmp/tmp-graphviz.dot"
+    dot_filename = generate_random_filename(suffix=".dot")
     comm_pid_tid_hierarchy_dot(runtimes, dot_filename, filter=filter)
     create_graphviz(dot_filename, inspect.currentframe())
+    os.remove(dot_filename)
 
 
 def pid_tid_hierarchy_dot(runtimes, filename, filter):
@@ -858,12 +1217,10 @@ def pid_tid_hierarchy_dot(runtimes, filename, filter):
 
 
 def pid_tid_hierarchy(filter=None):
-    filename = "task.csv"
-
     runtimes = defaultdict(lambda: {"_total": 0, "_comm": "", "tids":
         defaultdict(lambda: {"runtime": 0, "comm": ""})})
 
-    with open(filename, 'r') as csvfile:
+    with open(FILE_BASE, 'r') as csvfile:
         csvreader = csv.reader(csvfile)
         header = next(csvreader)[0].split(";")
         comm_index = header.index('Comm')
@@ -886,44 +1243,62 @@ def pid_tid_hierarchy(filter=None):
                 runtimes[pid]["_comm"] = comm
             runtimes[pid]["tids"][tid]["comm"] = comm
 
-    dot_filename = "/tmp/tmp-graphviz.dot"
+    dot_filename = generate_random_filename(suffix=".dot")
     pid_tid_hierarchy_dot(runtimes, dot_filename, filter=filter)
     create_graphviz(dot_filename, inspect.currentframe())
+    os.remove(dot_filename)
 
 
+start_time = time.time()
 
-tid_runtime_distribution_violin(df)
-tid_runtime_distribution_boxplot(df)
-tid_runtime_distribution_scatter(df)
+### TID
+tid_runs(df.copy(deep=True))
+tid_runtime_cumulative(df.copy(deep=True))
 
+tid_runtime_distribution_violin(df.copy())
+tid_runtime_distribution_boxplot(df.copy())
+tid_runtime_distribution_scatter(df.copy())
 
+tid_runtime_overall_pie(df.copy())
+tid_runtime_utilization(df.copy())
 
-pid_tid_accumulated_runtime_stacked(df)
+tid_runtime_linechart(df.copy())
+tid_sleeptime_linechart(df.copy())
 
-comm_runtime_overall_pie(df)
-comm_runtime_utilization(df)
+tid_runtime_spread(df.copy())
+tid_runtime_sleeptime_spread(df.copy())
+tid_runs_vs_runtime_quadrant(df.copy())
 
-comm_runs(df)
-comm_runtime_cumulative(df)
+### PID
+pid_tid_accumulated_runtime_stacked(df.copy())
 
-comm_runtime_linechart(df)
+### Comm
+comm_runs(df.copy())
+comm_runtime_cumulative(df.copy())
 
-comm_runtime_distribution_violin(df)
-comm_runtime_distribution_scatter(df)
-comm_runtime_distribution_boxplot(df)
-comm_runtime_spread(df)
+comm_runtime_distribution_violin(df.copy())
+comm_runtime_distribution_scatter(df.copy())
+comm_runtime_distribution_boxplot(df.copy())
+comm_runtime_spread(df.copy())
 
-comm_sleeptime_linechart(df)
-comm_runtime_sleeptime_spread(df)
-comm_runs_vs_runtime(df)
+comm_runtime_overall_pie(df.copy())
+comm_runtime_utilization(df.copy())
 
+comm_runtime_linechart(df.copy())
+comm_sleeptime_linechart(df.copy())
+
+comm_runtime_sleeptime_spread(df.copy())
+comm_runs_vs_runtime_quadrant(df.copy())
+
+# Misc Analysis
 
 comm_pid_tid_hierarchy(filter=["chromium", "ThreadPoolForeg"])
 pid_tid_hierarchy(filter=["chromium", "ThreadPoolForeg"])
 
-cleanup_directory()
 
-sys.exit(0)
+processing_time = time.time() - start_time
+print(f"Post-processed all analysis in {processing_time:.1f} seconds - bye")
+
 
 # Missing
 # cpu_runtime_utilization(df)

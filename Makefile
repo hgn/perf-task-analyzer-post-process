@@ -15,5 +15,5 @@ post-process-task:
 	./post-process-task.py
 
 clean:
-	rm -f *.pdf
+	rm -f comm/* pid/* tid/*
 	rm -f *.png

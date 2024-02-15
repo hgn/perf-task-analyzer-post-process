@@ -1,3 +1,5 @@
 *.pdf
 *.csv
 perf.data
+
+!reference.csv
