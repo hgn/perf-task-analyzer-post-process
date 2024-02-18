@@ -13,16 +13,16 @@ import sys
 import time
 import concurrent.futures
 from functools import partial
+from typing import Dict, List, Union
+from types import FrameType
+from collections import defaultdict
 
-# Third-party library imports
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.ticker import (FuncFormatter, MultipleLocator,
                                ScalarFormatter, StrMethodFormatter)
-# Consolidate collections imports
-from collections import defaultdict
 
 
 FILE_BASE = "reference.csv"
@@ -30,7 +30,7 @@ FILE_BASE = "reference.csv"
 df = pd.read_csv(FILE_BASE, sep=";")
 
 
-def calculate_spread_rating(task_runtimes):
+def calculate_spread_rating(task_runtimes: List[Union[int, float]]) -> float:
     if len(task_runtimes) <= 1:
         return 0.0
 
@@ -51,7 +51,7 @@ def generate_random_filename(length: int = 12, suffix: str = "") -> str:
     return f"/tmp/{filename}{suffix}"
 
 
-def create_images(frame):
+def create_images(frame: FrameType) -> None:
     plt.tight_layout()
     outbase = frame.f_code.co_name.replace("_", "-")
     for ext in ['png', 'pdf']:
@@ -62,7 +62,7 @@ def create_images(frame):
     cleanup_directory()
 
 
-def create_graphviz(in_filename, frame):
+def create_graphviz(in_filename, frame) -> None:
     outbase = frame.f_code.co_name.replace("_", "-")
     out_fdp_png = f"{outbase}-fdp.png"
     out_dot_png = f"{outbase}-dot.png"
@@ -72,7 +72,8 @@ def create_graphviz(in_filename, frame):
     subprocess.run(['dot', in_filename, '-Tpng', '-Gdpi=600', '-o', out_dot_png])
     cleanup_directory()
 
-def categorize_files(target_dir: str):
+
+def categorize_files(target_dir: str) -> Dict[str, List[str]]:
     """Categorize files into comm, pid, and tid based on their names or directories."""
     categories = {'comm': [], 'pid': [], 'tid': []}
     
@@ -91,7 +92,8 @@ def categorize_files(target_dir: str):
     
     return categories
 
-def generate_readme(readme_path: str):
+
+def generate_readme(readme_path: str) -> None:
     """Generate a README file with categorized images."""
     categories = categorize_files(".")
     
@@ -141,7 +143,7 @@ def cleanup_directory(directory: str = ".") -> None:
                 break
 
 
-def pid_runs(df):
+def pid_runs(df: pd.DataFrame):
     df['Label'] = df.apply(lambda x: f"{x['PID']} {x['Comm']}", axis=1)
 
     # Step 2: Count occurrences of each unique Label (previously TID, now PID and Comm)
@@ -185,7 +187,7 @@ def pid_runs(df):
     create_images(inspect.currentframe())
 
 
-def tid_runs(df):
+def tid_runs(df: pd.DataFrame) -> None:
     df['Label'] = df.apply(lambda x: f"{x['TID']} ({x['Comm']}, {x['PID']})", axis=1)
 
     # Step 2: Count occurrences of each unique TID (now using the Label column for clarity)
@@ -224,7 +226,7 @@ def tid_runs(df):
     create_images(inspect.currentframe())
 
 
-def comm_runs(df):
+def comm_runs(df: pd.DataFrame) -> None:
     process_counts = df['Comm'].value_counts()
 
     top_10_process_counts = process_counts.sort_values(ascending=False).head(20)
@@ -258,7 +260,7 @@ def comm_runs(df):
 
     create_images(inspect.currentframe())
 
-def tid_runtime_cumulative(df):
+def tid_runtime_cumulative(df: pd.DataFrame) -> None:
     df['Label'] = df.apply(lambda x: f"{x['TID']} ({x['Comm']}, {x['PID']})", axis=1)
     cumulative_runtimes = df.groupby('TID')['Runtime'].sum().nlargest(20) / 1e6
     tid_to_label = df.drop_duplicates('TID').set_index('TID')['Label']
@@ -285,7 +287,7 @@ def tid_runtime_cumulative(df):
 
     create_images(inspect.currentframe())
 
-def pid_runtime_cumulative(df):
+def pid_runtime_cumulative(df: pd.DataFrame) -> None:
     df['Runtime'] /= 1e9
     df['Runtime'] = pd.to_numeric(df['Runtime'], errors='coerce')
 
@@ -323,7 +325,7 @@ def pid_runtime_cumulative(df):
     create_images(inspect.currentframe())
 
 
-def comm_runtime_cumulative(df):
+def comm_runtime_cumulative(df: pd.DataFrame) -> None:
     cumulative_runtimes = df.groupby('Comm')['Runtime'].sum().sort_values(ascending=False).head(20)
 
     fig, ax = plt.subplots(figsize=(18, 8))
@@ -352,7 +354,7 @@ def comm_runtime_cumulative(df):
     create_images(inspect.currentframe())
 
 
-def tid_runtime_distribution_violin(df):
+def tid_runtime_distribution_violin(df: pd.DataFrame) -> None:
     # Calculate cumulative runtimes and select top 20 TIDs
     cumulative_runtimes = df.groupby('TID')['Runtime'].sum()
     top_20_tids = cumulative_runtimes.sort_values(ascending=False).head(20).index
@@ -423,7 +425,7 @@ def tid_runtime_distribution_violin(df):
 
 
 
-def comm_runtime_distribution_violin(df):
+def comm_runtime_distribution_violin(df: pd.DataFrame) -> None:
     cumulative_runtimes = df.groupby('Comm')['Runtime'].sum()
     top_20_tasks = cumulative_runtimes.sort_values(ascending=False).head(20).index
     filtered_df = df[df['Comm'].isin(top_20_tasks)]
@@ -509,7 +511,7 @@ def tid_runtime_distribution_scatter(df: pd.DataFrame) -> None:
     create_images(inspect.currentframe())
 
 
-def comm_runtime_distribution_scatter(df):
+def comm_runtime_distribution_scatter(df: pd.DataFrame) -> None:
     cumulative_runtimes = df.groupby('Comm')['Runtime'].sum()
     top_20_tasks = cumulative_runtimes.sort_values(ascending=False).head(20).index
     filtered_df = df[df['Comm'].isin(top_20_tasks)]
@@ -540,7 +542,7 @@ def comm_runtime_distribution_scatter(df):
 
     create_images(inspect.currentframe())
 
-def tid_runtime_distribution_boxplot(df):
+def tid_runtime_distribution_boxplot(df: pd.DataFrame) -> None:
     # Calculate cumulative runtimes and select top 20 tasks
     cumulative_runtimes = df.groupby('TID')['Runtime'].sum()
     top_20_tids = cumulative_runtimes.sort_values(ascending=False).head(20).index
@@ -582,7 +584,7 @@ def tid_runtime_distribution_boxplot(df):
     create_images(inspect.currentframe())
 
 
-def comm_runtime_distribution_boxplot(df):
+def comm_runtime_distribution_boxplot(df: pd.DataFrame) -> None:
     cumulative_runtimes = df.groupby('Comm')['Runtime'].sum()
     top_20_tasks = cumulative_runtimes.sort_values(ascending=False).head(20).index
     filtered_df = df[df['Comm'].isin(top_20_tasks)]
@@ -613,7 +615,7 @@ def comm_runtime_distribution_boxplot(df):
     create_images(inspect.currentframe())
 
 
-def tid_runtime_spread(df):
+def tid_runtime_spread(df: pd.DataFrame) -> None:
     df['TaskLabel'] = df.apply(lambda x: f"{x['TID']} ({x['Comm']}, {x['PID']})", axis=1)
     cumulative_runtimes = df.groupby(['TID', 'TaskLabel'])['Runtime'].sum().reset_index()
     top_20_tasks = cumulative_runtimes.sort_values(by='Runtime', ascending=False).head(20)
@@ -646,7 +648,7 @@ def tid_runtime_spread(df):
     create_images(inspect.currentframe())
 
 
-def comm_runtime_spread(df):
+def comm_runtime_spread(df: pd.DataFrame) -> None:
     cumulative_runtimes = df.groupby('Comm')['Runtime'].sum()
     top_20_tasks = cumulative_runtimes.sort_values(ascending=False).head(20).index
 
@@ -670,7 +672,7 @@ def comm_runtime_spread(df):
 
     create_images(inspect.currentframe())
 
-def tid_runtime_sleeptime_spread(df):
+def tid_runtime_sleeptime_spread(df: pd.DataFrame) -> None:
     cumulative_runtimes = df.groupby('TID')['Runtime'].sum()
     top_tids = cumulative_runtimes.sort_values(ascending=False).head(20).index
 
@@ -728,7 +730,7 @@ def tid_runtime_sleeptime_spread(df):
     create_images(inspect.currentframe())
 
 
-def comm_runtime_sleeptime_spread(df):
+def comm_runtime_sleeptime_spread(df: pd.DataFrame) -> None:
     cumulative_runtimes = df.groupby('Comm')['Runtime'].sum()
     top_tasks = cumulative_runtimes.sort_values(ascending=False).head(20).index
 
@@ -781,7 +783,7 @@ def comm_runtime_sleeptime_spread(df):
 
     create_images(inspect.currentframe())
 
-def tid_runtime_linechart(df):
+def tid_runtime_linechart(df: pd.DataFrame) -> None:
     tid1, tid2, tid3 = 3959, 4230, 3902
 
     p1 = df[df['TID'] == tid1]
@@ -823,7 +825,7 @@ def tid_runtime_linechart(df):
 
 
 
-def comm_runtime_linechart(df):
+def comm_runtime_linechart(df: pd.DataFrame) -> None:
     p1 = df[df['Comm'] == 'rcu_preempt']
     p2 = df[df['Comm'] == 'perf']
     p3 = df[df['Comm'] == 'kitty']
@@ -866,7 +868,7 @@ def comm_runtime_linechart(df):
     create_images(inspect.currentframe())
 
 
-def tid_sleeptime_linechart(df):
+def tid_sleeptime_linechart(df: pd.DataFrame) -> None:
     tid_values = [3959, 4230, 3957]
 
     columns_to_check = ['Runtime', 'Time Out-In', 'Time Out-Out', 'Time In-In', 'Time In-Out']
@@ -904,7 +906,7 @@ def tid_sleeptime_linechart(df):
     create_images(inspect.currentframe())
 
 
-def comm_sleeptime_linechart(df):
+def comm_sleeptime_linechart(df: pd.DataFrame) -> None:
     key = "Time Out-In"
 
     # remove -1 lines
@@ -954,7 +956,7 @@ def comm_sleeptime_linechart(df):
     create_images(inspect.currentframe())
 
 
-def tid_runs_vs_runtime_quadrant(df):
+def tid_runs_vs_runtime_quadrant(df: pd.DataFrame) -> None:
     total_runtime = df.groupby('TID')['Runtime'].sum().nlargest(40)
 
     execution_count = df.groupby('TID').size().reindex(total_runtime.index)
@@ -998,7 +1000,7 @@ def tid_runs_vs_runtime_quadrant(df):
     create_images(inspect.currentframe())
 
 
-def comm_runs_vs_runtime_quadrant(df):
+def comm_runs_vs_runtime_quadrant(df: pd.DataFrame) -> None:
     total_runtime = df.groupby('Comm')['Runtime'].sum().nlargest(40)
     execution_count = df.groupby('Comm').size().reindex(total_runtime.index)
 
@@ -1040,7 +1042,7 @@ def comm_runs_vs_runtime_quadrant(df):
     create_images(inspect.currentframe())
 
 
-def tid_runtime_utilization(df):
+def tid_runtime_utilization(df: pd.DataFrame) -> None:
     # FIXME, buggy.
     # THe overall value is above 100%, this is not doable by one TID
     return
@@ -1097,7 +1099,7 @@ def tid_runtime_utilization(df):
 
     create_images(inspect.currentframe())
 
-def comm_runtime_utilization(df):
+def comm_runtime_utilization(df: pd.DataFrame) -> None:
     # Calculate total runtime for each task and select the top 10 tasks
     total_runtime = df.groupby('Comm')['Runtime'].sum().nlargest(10)
 
@@ -1151,7 +1153,7 @@ def comm_runtime_utilization(df):
     create_images(inspect.currentframe())
 
 
-def tid_runtime_overall_pie(df):
+def tid_runtime_overall_pie(df: pd.DataFrame) -> None:
     df['Runtime'] /= 1e9
     df['Label'] = df['TID'].astype(str) + " (" + df['Comm'] + ", " + df['PID'].astype(str) + ")"
 
@@ -1178,7 +1180,7 @@ def tid_runtime_overall_pie(df):
     create_images(inspect.currentframe())
 
 
-def comm_runtime_overall_pie(df):
+def comm_runtime_overall_pie(df: pd.DataFrame) -> None:
     df['Runtime'] /= 1e9
 
     total_runtime_per_comm = df.groupby('Comm')['Runtime'].sum()
@@ -1203,7 +1205,7 @@ def comm_runtime_overall_pie(df):
     create_images(inspect.currentframe())
 
 
-def pid_tid_accumulated_runtime_stacked(df):
+def pid_tid_accumulated_runtime_stacked(df: pd.DataFrame) -> None:
     cumulative_runtimes_seconds = df.groupby('PID')['Runtime'].sum() / 1e9
     top_20_tasks = cumulative_runtimes_seconds.sort_values(ascending=False).head(20).index
 
@@ -1242,11 +1244,11 @@ def pid_tid_accumulated_runtime_stacked(df):
     create_images(inspect.currentframe())
 
 
-def numpy_stats(df):
+def numpy_stats(df: pd.DataFrame) -> None:
     print(df.groupby('Comm')['Runtime'].sum().sort_values(ascending=False))
     print(df.groupby('PID')['Runtime'].sum().sort_values(ascending=False))
 
-def comm_pid_tid_hierarchy_dot(runtimes, filename, filter):
+def comm_pid_tid_hierarchy_dot(runtimes, filename, filter) -> None:
     with open(filename, 'w') as f:
         f.write('digraph TaskHierarchy {\n')
         f.write('  node [shape=box];\n')
@@ -1283,7 +1285,7 @@ def comm_pid_tid_hierarchy_dot(runtimes, filename, filter):
         f.write('}\n')
 
 
-def comm_pid_tid_hierarchy(filter=None):
+def comm_pid_tid_hierarchy(filter=None) -> None:
     runtimes = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
 
     with open(FILE_BASE, 'r') as csvfile:
@@ -1310,7 +1312,7 @@ def comm_pid_tid_hierarchy(filter=None):
     os.remove(dot_filename)
 
 
-def pid_tid_hierarchy_dot(runtimes, filename, filter):
+def pid_tid_hierarchy_dot(runtimes, filename, filter) -> None:
     with open(filename, 'w') as f:
         f.write('digraph PIDHierarchy {\n')
         f.write('  node [shape=box];\n')
@@ -1338,7 +1340,7 @@ def pid_tid_hierarchy_dot(runtimes, filename, filter):
         f.write('}\n')
 
 
-def pid_tid_hierarchy(filter=None):
+def pid_tid_hierarchy(filter=None) -> None:
     runtimes = defaultdict(lambda: {"_total": 0, "_comm": "", "tids":
         defaultdict(lambda: {"runtime": 0, "comm": ""})})
 
@@ -1370,7 +1372,7 @@ def pid_tid_hierarchy(filter=None):
     create_graphviz(dot_filename, inspect.currentframe())
     os.remove(dot_filename)
 
-def execute_task(task):
+def execute_task(task) -> None:
     start_time = time.time()
     task()
     end_time = time.time()
