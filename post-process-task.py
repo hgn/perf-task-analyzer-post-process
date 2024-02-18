@@ -1,23 +1,29 @@
 #!/usr/bin/python3
 
-import os
-import sys
-import itertools
-import time
-import inspect
-import math
 import csv
-import shutil
-import pandas as pd
-import numpy as np
-import collections
-import subprocess
-import string
+import inspect
+import itertools
+import math
+import os
 import random
-import matplotlib.pyplot as plt
+import shutil
+import string
+import subprocess
+import sys
+import time
+import concurrent.futures
+from functools import partial
+
+# Third-party library imports
 import matplotlib.cm as cm
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from matplotlib.ticker import (FuncFormatter, MultipleLocator,
+                               ScalarFormatter, StrMethodFormatter)
+# Consolidate collections imports
 from collections import defaultdict
-from matplotlib.ticker import ScalarFormatter, MultipleLocator, StrMethodFormatter, FuncFormatter
+
 
 FILE_BASE = "reference.csv"
 
@@ -51,7 +57,7 @@ def create_images(frame):
     for ext in ['png', 'pdf']:
         outfile = f"{outbase}.{ext}"
         plt.savefig(outfile, dpi=300, bbox_inches='tight')
-        print(f"Generated {outfile}")
+        #print(f"Generated {outfile}")
     plt.close()
     cleanup_directory()
 
@@ -60,12 +66,45 @@ def create_graphviz(in_filename, frame):
     outbase = frame.f_code.co_name.replace("_", "-")
     out_fdp_png = f"{outbase}-fdp.png"
     out_dot_png = f"{outbase}-dot.png"
-    print(f'generate {out_fdp_png}')
+    #print(f'generate {out_fdp_png}')
     subprocess.run(['fdp', in_filename, '-Tpng', '-Gdpi=300', '-o', out_fdp_png])
-    print(f'generate {out_dot_png}')
+    #print(f'generate {out_dot_png}')
     subprocess.run(['dot', in_filename, '-Tpng', '-Gdpi=600', '-o', out_dot_png])
     cleanup_directory()
 
+def categorize_files(target_dir: str):
+    """Categorize files into comm, pid, and tid based on their names or directories."""
+    categories = {'comm': [], 'pid': [], 'tid': []}
+    
+    for root, dirs, files in os.walk(target_dir):
+        for file in files:
+            if file.endswith('.png'):
+                # Example categorization logic based on file naming
+                if 'comm' in file.lower():
+                    categories['comm'].append(os.path.join(root, file))
+                elif 'pid' in file.lower():
+                    categories['pid'].append(os.path.join(root, file))
+                elif 'tid' in file.lower():
+                    categories['tid'].append(os.path.join(root, file))
+    
+    # Sort the files within each category alphabetically
+    for category in categories:
+        categories[category].sort()
+    
+    return categories
+
+def generate_readme(readme_path: str):
+    """Generate a README file with categorized images."""
+    categories = categorize_files(".")
+    
+    with open(readme_path, 'w') as readme:
+        readme.write(f"# Linux Perf Task Analyzer - Post Processing\n\n")
+        for category, files in categories.items():
+            readme.write(f"## {category.capitalize()} Analysis\n\n")
+            for file in files:
+                relative_path = os.path.relpath(file, os.path.dirname(readme_path))
+                readme.write(f"![{os.path.basename(file)}]({relative_path})\n\n")
+                
 
 def cleanup_directory(directory: str = ".") -> None:
     """
@@ -97,8 +136,53 @@ def cleanup_directory(directory: str = ".") -> None:
                 source_path = os.path.join(directory, filename)
                 target_path = os.path.join(directory, target_dir, filename)
                 shutil.move(source_path, target_path)
-                print(f"move '{filename}' to '{target_dir}/{filename}'")
+                #print(f"move '{filename}' to '{target_dir}/{filename}'")
                 break
+
+
+def pid_runs(df):
+    df['Label'] = df.apply(lambda x: f"{x['PID']} {x['Comm']}", axis=1)
+
+    # Step 2: Count occurrences of each unique Label (previously TID, now PID and Comm)
+    process_counts = df['Label'].value_counts()
+
+    # Step 3: Get the top 20 processes based on their counts
+    top_20_process_counts = process_counts.head(20)
+
+    # Step 4: Plotting with updated aesthetics
+    fig, ax = plt.subplots(figsize=(18, 8))
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_visible(False)
+
+    # Choose a color palette or continue with the existing one
+    colors = ['blueviolet', 'mediumorchid']
+    bar_positions = np.arange(len(top_20_process_counts))
+
+    # Create horizontal bars
+    for i, value in enumerate(top_20_process_counts.values):
+        ax.barh(bar_positions[i], value, color=colors[i % len(colors)], edgecolor='none')
+
+    # Add text labels to the bars
+    for i, value in enumerate(top_20_process_counts.values):
+        label_x_pos = value + max(top_20_process_counts.values) * 0.01  # Slight offset for readability
+        ax.text(label_x_pos, i, f'{value}', va='center', fontsize=9)
+
+    # Adjust y-axis to display the new label format and invert to have the highest value on top
+    ax.invert_yaxis()
+    ax.set_axisbelow(True)
+    ax.tick_params(axis='y', length=0)
+    ax.xaxis.grid(which='major', linestyle=':', linewidth='0.8', color='#bbbbbb')
+    ax.xaxis.grid(which='minor', linestyle=':', linewidth='0.8', color='#bbbbbb')
+
+    # Update axis labels to reflect the change
+    ax.set_ylabel('PID (Comm)')
+    ax.set_xlabel('Number of Task Runs')
+    ax.set_yticks(bar_positions)
+    ax.set_yticklabels(top_20_process_counts.index, fontsize=9)
+
+    create_images(inspect.currentframe())
+
 
 def tid_runs(df):
     df['Label'] = df.apply(lambda x: f"{x['TID']} ({x['Comm']}, {x['PID']})", axis=1)
@@ -197,6 +281,43 @@ def tid_runtime_cumulative(df):
     ax.tick_params(axis='y', length=0)
     ax.xaxis.grid(which='major', linestyle=':', linewidth='0.8', color='#bbbbbb')
     ax.xaxis.grid(which='minor', linestyle=':', linewidth='0.8', color='#bbbbbb')
+
+    create_images(inspect.currentframe())
+
+def pid_runtime_cumulative(df):
+    df['Runtime'] /= 1e9
+    df['Runtime'] = pd.to_numeric(df['Runtime'], errors='coerce')
+
+    cumulative_runtimes = df.groupby('PID')['Runtime'].sum().sort_values(ascending=False).head(20)
+    pid_comm_map = df.drop_duplicates('PID').set_index('PID')['Comm']
+    cumulative_runtimes = cumulative_runtimes.to_frame().join(pid_comm_map).head(20)
+
+    fig, ax = plt.subplots(figsize=(18, 8))
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_visible(False)
+
+    colors = ['royalblue', 'dodgerblue']
+
+    cumulative_runtimes.sort_values(by='Runtime', inplace=True)
+
+    for i, (pid, row) in enumerate(cumulative_runtimes.iterrows()):
+        label = f"{pid} ({row['Comm']})"
+        value = row['Runtime']
+        bar = ax.barh(label, value, color=colors[i % len(colors)])
+        width = bar[0].get_width()
+        label_x_pos = width + ax.get_xlim()[1] * 0.01
+        ax.text(label_x_pos, bar[0].get_y() + bar[0].get_height() / 2, f'{width:.2f}', va='center', fontsize=9)
+
+    ax.set_ylabel('PID (Comm)')
+    ax.set_xlabel('Cumulative Runtime [s]')
+
+    ax.set_axisbelow(True)
+    ax.tick_params(axis='y', length=0)
+    ax.xaxis.grid(which='major', linestyle=':', linewidth='0.8', color='#bbbbbb')
+    ax.xaxis.grid(which='minor', linestyle=':', linewidth='0.8', color='#bbbbbb')
+
+    ax.get_xaxis().set_major_formatter(FuncFormatter(lambda x, pos: f'{x:.3f}'))
 
     create_images(inspect.currentframe())
 
@@ -1248,59 +1369,69 @@ def pid_tid_hierarchy(filter=None):
     create_graphviz(dot_filename, inspect.currentframe())
     os.remove(dot_filename)
 
+def execute_task(task):
+    start_time = time.time()
+    task()
+    end_time = time.time()
+    print(f"{task.func.__name__:>40s}() - {end_time - start_time:4.1f}s")
 
+tasks = [
+    # TID
+    partial(tid_runs, df.copy(deep=True)),
+    partial(tid_runtime_cumulative, df.copy(deep=True)),
+
+    partial(tid_runtime_distribution_violin, df.copy()),
+    partial(tid_runtime_distribution_boxplot, df.copy()),
+    partial(tid_runtime_distribution_scatter, df.copy()),
+
+    partial(tid_runtime_spread, df.copy()),
+
+    partial(tid_runtime_overall_pie, df.copy()),
+    partial(tid_runtime_utilization, df.copy()),
+    partial(tid_runtime_linechart, df.copy()),
+
+    partial(tid_sleeptime_linechart, df.copy()),
+
+    partial(tid_runtime_sleeptime_spread, df.copy()),
+    partial(tid_runs_vs_runtime_quadrant, df.copy()),
+
+    # PID
+    partial(pid_runs, df.copy(deep=True)),
+    partial(pid_runtime_cumulative, df.copy()),
+
+    partial(pid_tid_accumulated_runtime_stacked, df.copy()),
+
+    # COmm
+    partial(comm_runs, df.copy()),
+    partial(comm_runtime_cumulative, df.copy()),
+
+    partial(comm_runtime_distribution_violin, df.copy()),
+    partial(comm_runtime_distribution_scatter, df.copy()),
+    partial(comm_runtime_distribution_boxplot, df.copy()),
+
+    partial(comm_runtime_spread, df.copy()),
+
+    partial(comm_runtime_overall_pie, df.copy()),
+    partial(comm_runtime_utilization, df.copy()),
+    partial(comm_runtime_linechart, df.copy()),
+
+    partial(comm_sleeptime_linechart, df.copy()),
+
+    partial(comm_runtime_sleeptime_spread, df.copy()),
+    partial(comm_runs_vs_runtime_quadrant, df.copy()),
+
+    # Misc
+    partial(comm_pid_tid_hierarchy, df.copy(), filter=["chromium", "ThreadPoolForeg"]),
+    partial(pid_tid_hierarchy, df.copy(), filter=["chromium", "ThreadPoolForeg"]),
+]
+
+print(f"Task analysis starting, now executing {len(tasks)} analysis in parallel")
 start_time = time.time()
-
-### TID
-tid_runs(df.copy(deep=True))
-tid_runtime_cumulative(df.copy(deep=True))
-
-tid_runtime_distribution_violin(df.copy())
-tid_runtime_distribution_boxplot(df.copy())
-tid_runtime_distribution_scatter(df.copy())
-
-tid_runtime_overall_pie(df.copy())
-tid_runtime_utilization(df.copy())
-
-tid_runtime_linechart(df.copy())
-tid_sleeptime_linechart(df.copy())
-
-tid_runtime_spread(df.copy())
-tid_runtime_sleeptime_spread(df.copy())
-tid_runs_vs_runtime_quadrant(df.copy())
-
-### PID
-pid_tid_accumulated_runtime_stacked(df.copy())
-
-### Comm
-comm_runs(df.copy())
-comm_runtime_cumulative(df.copy())
-
-comm_runtime_distribution_violin(df.copy())
-comm_runtime_distribution_scatter(df.copy())
-comm_runtime_distribution_boxplot(df.copy())
-comm_runtime_spread(df.copy())
-
-comm_runtime_overall_pie(df.copy())
-comm_runtime_utilization(df.copy())
-
-comm_runtime_linechart(df.copy())
-comm_sleeptime_linechart(df.copy())
-
-comm_runtime_sleeptime_spread(df.copy())
-comm_runs_vs_runtime_quadrant(df.copy())
-
-# Misc Analysis
-
-comm_pid_tid_hierarchy(filter=["chromium", "ThreadPoolForeg"])
-pid_tid_hierarchy(filter=["chromium", "ThreadPoolForeg"])
-
-
+with concurrent.futures.ProcessPoolExecutor() as executor:
+    executor.map(execute_task, tasks)
 processing_time = time.time() - start_time
-print(f"Post-processed all analysis in {processing_time:.1f} seconds - bye")
+print(f"Post-processed all analysis in whooping {processing_time:.1f} seconds - bye")
+print(f"All files are generated into comm/, pid/ and /tid")
 
-
-# Missing
-# cpu_runtime_utilization(df)
-
-
+print(f"Updating README.md")
+generate_readme('README.md')
