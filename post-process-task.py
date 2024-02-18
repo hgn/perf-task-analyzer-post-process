@@ -79,7 +79,6 @@ def categorize_files(target_dir: str):
     for root, dirs, files in os.walk(target_dir):
         for file in files:
             if file.endswith('.png'):
-                # Example categorization logic based on file naming
                 if 'comm' in file.lower():
                     categories['comm'].append(os.path.join(root, file))
                 elif 'pid' in file.lower():
@@ -87,7 +86,6 @@ def categorize_files(target_dir: str):
                 elif 'tid' in file.lower():
                     categories['tid'].append(os.path.join(root, file))
     
-    # Sort the files within each category alphabetically
     for category in categories:
         categories[category].sort()
     
@@ -102,8 +100,11 @@ def generate_readme(readme_path: str):
         for category, files in categories.items():
             readme.write(f"## {category.capitalize()} Analysis\n\n")
             for file in files:
+                filename_no_ext = os.path.splitext(os.path.basename(file))[0]
+                title = filename_no_ext.replace('-', ' ').title()
+                readme.write(f"### {title}\n\n")
                 relative_path = os.path.relpath(file, os.path.dirname(readme_path))
-                readme.write(f"![{os.path.basename(file)}]({relative_path})\n\n")
+                readme.write(f"![title]({relative_path})\n\n")
                 
 
 def cleanup_directory(directory: str = ".") -> None:
